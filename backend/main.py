@@ -66,29 +66,73 @@ async def ask_gemini(req: ChatRequest):
     result = ms_graph.invoke({"query": req.query})
     print(f"RAG Pipeline result: {result}")
 
-    # ✅ Defensive fix for invalid UUIDs
+    # Defensive fix for invalid UUIDs (Supabase IDs look like proper UUIDs)
     if req.user_id and "usr_" in req.user_id:
         print(f"⚠️ Invalid UUID format detected: {req.user_id}")
         req.user_id = None
 
+    # -----------------------------
+    # ✅ Handle chat saving
+    # -----------------------------
     if req.user_id:
+        print("🧠 Saving chat for user:", req.user_id)
         try:
+            # 1️⃣ Ensure user exists in `users` table (to satisfy FK)
+            existing_user = (
+                supabase.table("users")
+                .select("id")
+                .eq("id", req.user_id)
+                .execute()
+                .data
+            )
+            if not existing_user:
+                supabase.table("users").insert({
+                    "id": req.user_id,
+                    "email": getattr(req, "user_email", "unknown@email.com"),
+                    "name": "Google User",
+                    "role": "user"
+                }).execute()
+                print(f"👤 Auto-created missing user: {req.user_id}")
+
+            # 2️⃣ Extract plain text answer (works whether result['answer'] is dict or str)
+            answer_text = (
+                result["answer"]["answer"]
+                if isinstance(result["answer"], dict)
+                else result["answer"]
+            )
+
+            sources = []
+            if isinstance(result.get("answer"), dict):
+                sources = result["answer"].get("sources", [])
+            elif isinstance(result.get("sources"), list):
+                sources = result["sources"]
+
+            # 3️⃣ Insert chat record
             supabase.table("chat_history").insert({
                 "user_id": req.user_id,
                 "query": req.query,
-                "response": result["answer"],
+                "response": answer_text,
                 "agent_type": result.get("agent_type", "research"),
-                "sources": result.get("sources", []),
+                "sources": sources,
             }).execute()
+
         except Exception as e:
             print("⚠️ Chat history save failed:", e)
     else:
         print("ℹ️ Skipped chat history insert (no valid user_id).")
 
+    # -----------------------------
+    # ✅ Return clean JSON response
+    # -----------------------------
+    answer_text = (
+        result["answer"]["answer"]
+        if isinstance(result["answer"], dict)
+        else result["answer"]
+    )
     return {
-        "answer": result["answer"],
+        "answer": answer_text,
         "agent_type": result.get("agent_type"),
-        "sources": result.get("sources", [])
+        "sources": result.get("sources", []),
     }
 
 
