@@ -15,7 +15,7 @@ import urllib.parse
 # ⚙️ CONFIG
 # ==============================
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://127.0.0.1:8000")
-st.set_page_config(page_title="🧠 MS Detection Assistant", layout="wide")
+st.set_page_config(page_title="DetectMS Assistant", layout="wide")
 
 # ==============================
 # 🧠 SESSION STATE INIT
@@ -30,6 +30,8 @@ if "chat_sessions" not in st.session_state:
     st.session_state.chat_sessions = {}  # {session_id: [{"role": "user/assistant", "content": "..."}]}
 if "active_chat" not in st.session_state:
     st.session_state.active_chat = None
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "login"
 
 # Refresh Supabase session if token present in browser cookies
 session = supabase.auth.get_session()
@@ -39,13 +41,56 @@ if session and session.user:
         "id": session.user.id,
     }
 
+# ============================================================
+# 📜 Load previous chat history from Supabase
+# ============================================================
+def load_chat_history():
+    """Load saved chat messages for the current user from Supabase."""
+    try:
+        user = st.session_state.get("user")
+        if not user:
+            return
+
+        user_id = user.get("id")
+        email = user.get("email")
+
+        # Try both filters to support old entries
+        query = supabase.table("chat_history").select("query, response, created_at")
+
+        # Prefer user_id if valid UUID, otherwise fallback to email
+        if user_id and not str(user_id).startswith("usr_"):
+            query = query.eq("user_id", user_id)
+        else:
+            query = query.eq("user_email", email) if "user_email" in [c.name for c in supabase.table("chat_history").select("*").execute().data] else query.eq("user_id", email)
+
+        rows = query.order("created_at", desc=False).execute().data
+        print("🧾 Chat rows fetched:", rows)
+
+        if rows:
+            sid = str(uuid.uuid4())
+            st.session_state.chat_sessions = {sid: []}
+            for row in rows:
+                st.session_state.chat_sessions[sid].append(
+                    {"role": "user", "content": row["query"]}
+                )
+                st.session_state.chat_sessions[sid].append(
+                    {"role": "assistant", "content": row["response"]}
+                )
+            st.session_state.active_chat = sid
+            st.session_state.messages = st.session_state.chat_sessions[sid]
+            st.success("💬 Previous chat history loaded.")
+        else:
+            st.info("No previous chats yet.")
+    except Exception as e:
+        st.warning(f"⚠️ Could not load past chat history: {e}")
+
 
 # =====================================================
 # 🔑 LOGIN COMPONENT
 # =====================================================
 
 def login_component():
-    st.subheader("🔑 Login to MS Detection Assistant")
+    st.subheader("🔑 Login to DetectMS Assistant")
 
     if "user" not in st.session_state:
         st.session_state.user = None
@@ -63,7 +108,7 @@ def login_component():
                     "id": data.user.id,
                 }
                 st.success(f"✅ Logged in as {data.user.email}")
-
+                load_chat_history()
                 # Clean up query params (remove ?code=...)
                 st.query_params.clear()
                 time.sleep(0.8)
@@ -78,9 +123,11 @@ def login_component():
     if session and session.user:
         st.session_state.user = {
             "email": session.user.email,
-            "id": session.user.id,
+            "id": session.user.id,  
         }
         st.success(f"✅ Logged in as {session.user.email}")
+        load_chat_history()
+        # ---- Logout button ----
 
         if st.button("Logout"):
             supabase.auth.sign_out()
@@ -204,7 +251,7 @@ def dashboard_component():
 # 💬 CHATBOT COMPONENT (with sidebar history)
 # =====================================================
 def chatbot_component():
-    st.subheader("💬 Gemini Research Chatbot")
+    st.subheader("Multiple Sclerosis Chatbot")
 
     if not st.session_state.user:
         st.warning("Please login first.")
@@ -224,6 +271,7 @@ def chatbot_component():
         else:
             st.info("No previous chats yet.")
 
+        # ✅ "New Chat" always available in sidebar
         if st.button("➕ New Chat", key="new_chat_btn"):
             new_sid = str(uuid.uuid4())
             st.session_state.chat_sessions[new_sid] = []
@@ -231,20 +279,27 @@ def chatbot_component():
             st.session_state.messages = []
             st.rerun()
 
-    # Display current chat
+    # ===== Main Chat Area =====
     if st.session_state.active_chat is None:
-        st.info("Start a new chat from the sidebar to begin.")
+        if st.button("Start New Chat", key="start_chat_in_main"):
+            new_sid = str(uuid.uuid4())
+            st.session_state.chat_sessions[new_sid] = []
+            st.session_state.active_chat = new_sid
+            st.session_state.messages = []
+            st.rerun()
         return
 
+    # Render messages
     for msg in st.session_state.messages:
         st.chat_message(msg["role"]).markdown(msg["content"])
 
+    # Input for new prompt
     if prompt := st.chat_input("Ask about Multiple Sclerosis..."):
         st.chat_message("user").markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
 
         try:
-            with st.spinner("Gemini is thinking..."):
+            with st.spinner("Generating response..."):
                 res = requests.post(
                     f"{FASTAPI_URL}/ask_gemini/",
                     json={
@@ -260,7 +315,6 @@ def chatbot_component():
                     answer = data.get("answer", "No response.")
                     st.chat_message("assistant").markdown(answer)
                     st.session_state.messages.append({"role": "assistant", "content": answer})
-                    # ✅ Save in session-level chat history
                     sid = st.session_state.active_chat
                     st.session_state.chat_sessions[sid] = st.session_state.messages
                 else:
@@ -271,7 +325,10 @@ def chatbot_component():
 # =====================================================
 # 🧭 NAVIGATION (TABS)
 # =====================================================
-st.title("🧠 MS Detection Assistant")
+st.title("DetectMS Assistant")
+
+if st.session_state.get("active_tab") == "chatbot":
+    st.markdown("<script>window.scrollTo(0, document.body.scrollHeight);</script>", unsafe_allow_html=True)
 
 tab1, tab2, tab3 = st.tabs(["🔑 Login", "📊 Dashboard", "💬 Chatbot"])
 
