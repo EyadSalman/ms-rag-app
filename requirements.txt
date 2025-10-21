@@ -1,0 +1,20 @@
+streamlit
+fastapi
+uvicorn
+requests
+pillow
+google-generativeai
+supabase
+python-dotenv
+plotly
+
+# RAG / retrieval requirements
+langchain
+langchain-huggingface
+langchain-community
+chromadb
+sentence-transformers
+transformers
+unstructured
+PyPDF2
+tqdm
