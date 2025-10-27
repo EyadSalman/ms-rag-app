@@ -38,7 +38,8 @@ NEW_PDF_FILES = [
     "papers/Role of MRI in MS.pdf",
     "papers/MRI in the Diagnosis and Monitoring of Multiple Sclerosis.pdf",
     "papers/the-neuropsychiatry-of-multiple-sclerosis.pdf",
-    "papers/ptj3703175.pdf"
+    "papers/ptj3703175.pdf",
+    "papers/Detecting New Lesions Using a Large Language Model  Applications in Real‐World.pdf",
 ]
 
 

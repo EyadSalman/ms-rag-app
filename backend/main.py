@@ -25,6 +25,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 import asyncio
 import re
 from fastapi import Form, HTTPException
+import uuid
+from fastapi import Query
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs entirely
@@ -50,6 +52,7 @@ class ChatRequest(BaseModel):
     query: str
     history: list
     user_id: str | None = None
+    session_id: str | None = None
 
 app = FastAPI(title="MRI Model Comparison API")
 
@@ -66,25 +69,26 @@ async def ask_gemini(req: ChatRequest):
     result = ms_graph.invoke({"query": req.query})
     print(f"RAG Pipeline result: {result}")
 
-    # Defensive fix for invalid UUIDs (Supabase IDs look like proper UUIDs)
+    # Ensure user ID validity
     if req.user_id and "usr_" in req.user_id:
-        print(f"⚠️ Invalid UUID format detected: {req.user_id}")
         req.user_id = None
 
-    # -----------------------------
-    # ✅ Handle chat saving
-    # -----------------------------
+    # Extract plain text answer
+    answer_text = (
+        result["answer"]["answer"]
+        if isinstance(result["answer"], dict)
+        else result["answer"]
+    )
+
+    sources = result.get("sources", [])
+
+    # ✅ IMPORTANT: Use session_id from request, don't create a new one
+    session_id = req.session_id if hasattr(req, "session_id") and req.session_id else str(uuid.uuid4())
+
     if req.user_id:
-        print("🧠 Saving chat for user:", req.user_id)
         try:
-            # 1️⃣ Ensure user exists in `users` table (to satisfy FK)
-            existing_user = (
-                supabase.table("users")
-                .select("id")
-                .eq("id", req.user_id)
-                .execute()
-                .data
-            )
+            # Ensure user exists
+            existing_user = supabase.table("users").select("id").eq("id", req.user_id).execute().data
             if not existing_user:
                 supabase.table("users").insert({
                     "id": req.user_id,
@@ -92,24 +96,11 @@ async def ask_gemini(req: ChatRequest):
                     "name": "Google User",
                     "role": "user"
                 }).execute()
-                print(f"👤 Auto-created missing user: {req.user_id}")
 
-            # 2️⃣ Extract plain text answer (works whether result['answer'] is dict or str)
-            answer_text = (
-                result["answer"]["answer"]
-                if isinstance(result["answer"], dict)
-                else result["answer"]
-            )
-
-            sources = []
-            if isinstance(result.get("answer"), dict):
-                sources = result["answer"].get("sources", [])
-            elif isinstance(result.get("sources"), list):
-                sources = result["sources"]
-
-            # 3️⃣ Insert chat record
+            # ✅ Save chat with the SAME session_id for the entire conversation
             supabase.table("chat_history").insert({
                 "user_id": req.user_id,
+                "session_id": session_id,  # 👈 This must be consistent
                 "query": req.query,
                 "response": answer_text,
                 "agent_type": result.get("agent_type", "research"),
@@ -118,23 +109,13 @@ async def ask_gemini(req: ChatRequest):
 
         except Exception as e:
             print("⚠️ Chat history save failed:", e)
-    else:
-        print("ℹ️ Skipped chat history insert (no valid user_id).")
 
-    # -----------------------------
-    # ✅ Return clean JSON response
-    # -----------------------------
-    answer_text = (
-        result["answer"]["answer"]
-        if isinstance(result["answer"], dict)
-        else result["answer"]
-    )
     return {
         "answer": answer_text,
         "agent_type": result.get("agent_type"),
-        "sources": result.get("sources", []),
+        "sources": sources,
+        "session_id": session_id,
     }
-
 
 @app.post("/upload_mri/")
 async def upload_mri(file: UploadFile, user_id: str = Form(None)):
@@ -182,6 +163,22 @@ async def register_user(email: str = Form(...), name: str = Form(None)):
         return {"message": "User registered", "user": result.data[0]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error registering user: {e}")
+    
+# ============================================================
+# 🗑️ DELETE MRI RESULTS BY USER_ID
+# ============================================================
+@app.delete("/delete_mri_results/")
+async def delete_mri_results(user_id: str = Query(..., description="User ID whose MRI results should be deleted")):
+    """
+    Delete all MRI results for a given user_id.
+    This can be used when a user clears their scan history or deletes their account.
+    """
+    try:
+        deleted = supabase.table("mri_results").delete().eq("user_id", user_id).execute()
+        count = len(deleted.data) if deleted.data else 0
+        return {"message": f"🗑️ Deleted {count} MRI results for user_id: {user_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting MRI results: {e}")
 
 @app.get("/healthcheck/")
 async def healthcheck():

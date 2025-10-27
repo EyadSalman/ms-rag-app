@@ -1,20 +1,36 @@
+# ==============================================================
+# 🧠 Core App Frameworks
+# ==============================================================
 streamlit
 fastapi
 uvicorn
 requests
 pillow
-google-generativeai
-supabase
-python-dotenv
 plotly
+python-dotenv
+supabase
+google-generativeai
 
-# RAG / retrieval requirements
-langchain
-langchain-huggingface
-langchain-community
-chromadb
-sentence-transformers
-transformers
+# ==============================================================
+# 🔍 RAG / Retrieval & LLM Integration
+# ==============================================================
+
+# 🧩 LangChain Modular Packages (Modern Ecosystem)
+langchain-core>=1.0.0
+langchain-community>=0.4.0
+langchain-chroma>=1.0.0
+langchain-huggingface>=1.0.0
+langchain-google-genai>=3.0.0
+langchain-text-splitters>=1.0.0
+langchain-experimental>=0.1.0  # for EnsembleRetriever and advanced retrievers
+
+# 🧠 Vector Databases & Embeddings
+chromadb>=0.5.3
+sentence-transformers>=3.0.0
+transformers>=4.42.0
+torch>=2.2.0
+tqdm
+
+# 🧾 Document Loaders & Processing
 unstructured
 PyPDF2
-tqdm

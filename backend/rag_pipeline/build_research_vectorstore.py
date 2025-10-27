@@ -1,171 +1,175 @@
 # backend/rag_pipeline/build_research_vectorstore.py
-import os
-import itertools
-from supabase_client import supabase
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import (
-    WebBaseLoader,
-    ArxivLoader,
-    PubMedLoader,
-)
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from langchain_core.documents import Document
-from supabase_client import supabase
-
-# ==============================
-# ⚙️ ENV + CONFIG
-# ==============================
+import os, itertools, hashlib
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-PERSIST_DIR = "vectorstores/research_db_free"
-EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
-embedding = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import WebBaseLoader, ArxivLoader, PubMedLoader
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
 
-RESEARCH_URLS = [
+# ==============================
+# 🔧 CONFIG
+# ==============================
+PERSIST_DIR = "vectorstores/research_db_free"
+embedding = HuggingFaceEmbeddings(model_name="mixedbread-ai/mxbai-embed-large-v1")
+
+# ==============================
+# 🧠 RESEARCH SOURCES
+# ==============================
+NEW_RESEARCH_URLS = [
+    # 🏥 General & Clinical Information
     "https://www.nhs.uk/conditions/multiple-sclerosis/",
     "https://www.mayoclinic.org/diseases-conditions/multiple-sclerosis/symptoms-causes/syc-20350269",
-    "https://en.wikipedia.org/wiki/Multiple_sclerosis",
-    "https://www.nationalmssociety.org/What-is-MS/Types-of-MS",
     "https://www.cdc.gov/multiple-sclerosis/index.html",
+    "https://www.nationalmssociety.org/What-is-MS/Types-of-MS",
+    "https://en.wikipedia.org/wiki/Multiple_sclerosis",
+    "https://www.who.int/news-room/fact-sheets/detail/multiple-sclerosis",
+    "https://www.clevelandclinicmeded.com/medicalpubs/diseasemanagement/neurology/multiple-sclerosis/",
+    # 🧬 Pathophysiology & Immunology
+    "https://www.frontiersin.org/journals/immunology/sections/multiple-sclerosis-and-neuroimmunology",
+    "https://www.nature.com/articles/s41582-023-00899-2",
+    "https://www.thelancet.com/journals/laneur/article/PIIS1474-4422(21)00323-2/fulltext",
+    "https://pubmed.ncbi.nlm.nih.gov/36594979/",
+    "https://jamanetwork.com/journals/jamaneurology/fullarticle/2798393",
+    # 🧲 MRI & Imaging Studies
+    "https://radiopaedia.org/articles/multiple-sclerosis-3",
+    "https://www.sciencedirect.com/topics/medicine-and-dentistry/multiple-sclerosis-mri",
+    "https://www.frontiersin.org/articles/10.3389/fneur.2022.1005813/full",
+    "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8968296/",
+    # 💊 Treatment & Clinical Guidelines
+    "https://www.fda.gov/consumers/consumer-updates/treatments-multiple-sclerosis-ms",
+    "https://www.ema.europa.eu/en/human-regulatory/overview/multiple-sclerosis-treatments",
+    "https://emedicine.medscape.com/article/1146199-overview",
+    "https://www.ninds.nih.gov/health-information/disorders/multiple-sclerosis",
+    "https://www.uptodate.com/contents/overview-of-the-treatment-of-multiple-sclerosis-in-adults",
+    "https://www.nejm.org/doi/full/10.1056/NEJMra1401483",
+    # 🧪 Research & Epidemiology
+    "https://multiplesclerosisnewstoday.com/",
+    "https://msif.org/about-us/what-we-do/research/",
+    "https://www.msif.org/about-ms/what-is-ms/",
+    "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9119274/",
+    "https://www.thelancet.com/journals/laneur/article/PIIS1474-4422(19)30225-2/fulltext",
 ]
 
 # ==============================
-# 🧠 LOG TO SUPABASE
+# ⚙️ HELPERS
 # ==============================
-def log_research_sources(docs, model: str = EMBED_MODEL):
-    """Safely logs metadata of research documents to Supabase in batches."""
-    if not docs:
-        print("⚠️ No documents to log to Supabase.")
-        return
+def compute_hash(text: str) -> str:
+    """Create a unique hash for each chunk's text."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    entries = []
-    for d in docs:
-        meta = getattr(d, "metadata", {}) or {}
 
-        title = meta.get("title") or meta.get("source") or "Untitled Document"
-        authors = meta.get("authors") or "Unknown"
-        year = meta.get("year") or 2025
-        source_url = meta.get("source") or meta.get("url")
-        pdf_path = meta.get("file_path") or meta.get("path")
-
-        entries.append({
-            "title": str(title)[:500],
-            "authors": str(authors)[:500],
-            "year": year if isinstance(year, int) else 2025,
-            "source_url": source_url,
-            "pdf_path": pdf_path,
-            "embedding_model": model,
-            "chunk_count": 1,
-        })
-
-    # Batch insert (Supabase has 100-row insert limit)
+def get_existing_hashes(vectordb):
+    """Extract hashes from existing Chroma vectorstore (if any)."""
+    hashes = set()
     try:
-        batch_size = 100
-        for i in range(0, len(entries), batch_size):
-            chunk = entries[i:i + batch_size]
-            supabase.table("research_sources").insert(chunk).execute()
-        print(f"✅ Logged {len(entries)} research sources to Supabase.")
-    except Exception as e:
-        print(f"❌ Failed to log research sources: {e}")
+        data = vectordb.get(include=["metadatas"])
+        for meta in data["metadatas"]:
+            if meta and "hash" in meta:
+                hashes.add(meta["hash"])
+    except Exception:
+        pass
+    return hashes
+
 
 # ==============================
-# 🌐 FETCH LIVE RESEARCH
+# 🌐 LIVE FETCH (PubMed + ArXiv + Scholar)
 # ==============================
 def fetch_live_research(max_docs_per_source=5):
-    """
-    Fetches latest Multiple Sclerosis research from PubMed, arXiv, and Google Scholar.
-    """
     docs = []
     ms_terms = ["multiple sclerosis", "MS disease", "demyelination disorder"]
-    ai_terms = ["machine learning", "deep learning", "artificial intelligence", "AI"]
+    ai_terms = ["machine learning", "deep learning", "AI"]
     modality_terms = ["MRI", "magnetic resonance imaging", "lesion detection", "brain scan"]
     task_terms = ["classification", "diagnosis", "prediction", "segmentation", "progression", "treatment", "symptoms"]
 
     query_combinations = [
         f"{a} {b} {c} {d}"
         for a, b, c, d in itertools.product(ms_terms, ai_terms, modality_terms, task_terms)
-    ][:10]
+    ][:8]
 
-    loaders = [
-        ("PubMed", PubMedLoader),
-        ("ArXiv", ArxivLoader),
-    ]
-
-    for source_name, LoaderClass in loaders:
+    for query in query_combinations:
         try:
-            for query in query_combinations:
-                print(f"🔎 {source_name}: {query}")
-                loader = LoaderClass(query=query, load_max_docs=max_docs_per_source)
-                results = loader.load()
-                print(f"✅ {source_name}: {len(results)} docs for '{query}'")
-                docs.extend(results)
+            pubmed_loader = PubMedLoader(query=query, load_max_docs=max_docs_per_source)
+            res = pubmed_loader.load()
+            docs.extend(res)
+            print(f"✅ {len(res)} from PubMed for '{query}'")
         except Exception as e:
-            print(f"⚠️ {source_name} fetch failed: {e}")
+            print(f"⚠️ PubMed failed for '{query}': {e}")
 
-    # Google Scholar (optional)
+        try:
+            arxiv_loader = ArxivLoader(query=query, load_max_docs=max_docs_per_source)
+            res = arxiv_loader.load()
+            docs.extend(res)
+            print(f"✅ {len(res)} from ArXiv for '{query}'")
+        except Exception as e:
+            print(f"⚠️ ArXiv failed for '{query}': {e}")
+
     try:
         from langchain_community.document_loaders import GoogleScholarLoader
         for query in query_combinations:
-            print(f"🎓 Scholar: {query}")
-            loader = GoogleScholarLoader(query=query, num_results=max_docs_per_source)
-            results = loader.load()
-            print(f"✅ Scholar: {len(results)} results for '{query}'")
-            docs.extend(results)
+            scholar_loader = GoogleScholarLoader(query=query, num_results=max_docs_per_source)
+            res = scholar_loader.load()
+            docs.extend(res)
+            print(f"🎓 Added {len(res)} from Google Scholar for '{query}'")
     except Exception as e:
-        print(f"⚠️ Scholar fetch failed (optional): {e}")
+        print(f"⚠️ Google Scholar skipped (missing scholarly/SerpAPI): {e}")
 
-    print(f"\n📚 Total live documents fetched: {len(docs)}\n")
+    print(f"\n📚 Total live research docs fetched: {len(docs)}\n")
     return docs
 
+
 # ==============================
-# 🧩 BUILD FUNCTION
+# 🧩 BUILD FUNCTION (Incremental)
 # ==============================
 def build_research_db():
-    """Builds and persists the research vectorstore."""
-    all_docs = []
-    print(f"🔍 Loading {len(RESEARCH_URLS)} curated research URLs...")
+    print("🚀 Building or updating research vectorstore...")
+    vectordb = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding)
+    existing_hashes = get_existing_hashes(vectordb)
+    print(f"🔍 Existing chunks in DB: {len(existing_hashes)}")
 
-    for url in RESEARCH_URLS:
+    all_docs = []
+
+    # Load from curated URLs
+    for url in NEW_RESEARCH_URLS:
         try:
             loader = WebBaseLoader(url)
-            page_docs = loader.load()
-            print(f"✅ Loaded {url} ({len(page_docs)} pages)")
-            all_docs.extend(page_docs)
+            docs = loader.load()
+            for d in docs:
+                d.metadata["source"] = url
+            all_docs.extend(docs)
+            print(f"✅ Loaded: {url}")
         except Exception as e:
             print(f"⚠️ Skipped {url}: {e}")
 
+    # Fetch dynamic research
     live_docs = fetch_live_research()
     all_docs.extend(live_docs)
     print(f"📚 Total documents (static + live): {len(all_docs)}")
 
-    if not all_docs:
-        print("❌ No documents loaded — aborting vectorstore creation.")
-        return
-
-    splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1200,  # longer for better coherence
-    chunk_overlap=150,
-    separators=["\n\n", "\n", ".", "?", "!", " ", ""]
-)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     chunks = splitter.split_documents(all_docs)
-    print(f"🧩 Split into {len(chunks)} chunks.")
+    print(f"🧩 Generated {len(chunks)} text chunks.")
 
-    try:
-        vectordb = Chroma.from_documents(
-            chunks,
-            embedding=embedding,
-            persist_directory=PERSIST_DIR
-        )
-        vectordb.persist()
-        print(f"💾 Saved {len(chunks)} chunks to '{PERSIST_DIR}'")
-    except Exception as e:
-        print(f"❌ Error creating Chroma vectorstore: {e}")
-        return
+    # Deduplicate by hash
+    new_chunks = []
+    for c in chunks:
+        h = compute_hash(c.page_content)
+        if h not in existing_hashes:
+            c.metadata["hash"] = h
+            new_chunks.append(c)
 
-    log_research_sources(all_docs)
-    print("✅ Research vectorstore built and logged successfully!")
+    print(f"✨ {len(new_chunks)} new unique chunks detected.")
+
+    if new_chunks:
+        vectordb.add_documents(new_chunks)
+        print(f"💾 Added {len(new_chunks)} new chunks to '{PERSIST_DIR}'")
+    else:
+        print("✅ No new chunks to add — vectorstore already up to date.")
+
+    print("✅ Research vectorstore ready!")
+
 
 # ==============================
 # 🚀 MAIN

@@ -223,7 +223,7 @@ def load_model(name: str):
         path = "D:/mss/models/cnn_mss_best.pth"
     elif name == "vit":
         model = ViT_Tiny_Regularized(dropout_p=0.5)
-        path = "D:/mss/models/vit_tiny_new_mss_best.pth"
+        path = "D:/mss/models/vit_mss_best.pth"
     elif name == "densenet":
         model = DenseNet121_Regularized(dropout_p=0.5)
         path = "D:/mss/models/densenet121_mss_best.pth"
