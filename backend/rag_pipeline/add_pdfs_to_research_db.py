@@ -14,19 +14,6 @@ from langchain_chroma import Chroma
 PERSIST_DIR = "vectorstores/research_db_free"
 embedding = HuggingFaceEmbeddings(model_name="mixedbread-ai/mxbai-embed-large-v1")
 
-# 🧩 Previously added PDFs (for reference only)
-PDF_FILES = [
-    "papers/Euro J of Neurology - 2018 - Dobson - Multiple sclerosis   a review.pdf",
-    "papers/Exploration of machine learning techniques in.pdf",
-    "papers/fimmu-12-700582.pdf",
-    "papers/journals.plos disability progression.pdf",
-    "papers/Machine_Learning_Approaches_in_Study_of_Multiple_S.pdf",
-    "papers/mdpi prognostic.pdf",
-    "papers/nature disease progression.pdf",
-    "papers/royal-society-machine-learning-for-refining-interpretation-of-magnetic-resonance-imaging-scans.pdf",
-    "papers/science systematic review.pdf",
-    "papers/Machine learning in diagnosis and disability prediction of multiple sclerosis.pdf",
-]
 
 # 🆕 Newly added PDFs (only these will be processed)
 NEW_PDF_FILES = [
@@ -40,6 +27,27 @@ NEW_PDF_FILES = [
     "papers/the-neuropsychiatry-of-multiple-sclerosis.pdf",
     "papers/ptj3703175.pdf",
     "papers/Detecting New Lesions Using a Large Language Model  Applications in Real‐World.pdf",
+    "papers/AI in MRI scans.pdf",
+    "papers/De-escalating and discontinuing disease-modifying therapies in multiple sclerosis.pdf",
+    "papers/Early identification of individuals at risk for Multiple Sclerosis.pdf",
+    "papers/Towards a Uniﬁed Set of Diagnostic Criteria for Multiple Sclerosis.pdf",
+    "papers/Environmental risk factors for multiple sclerosis.pdf",
+    "papers/Metabolomics in Multiple Sclerosis Advances, Challenges, and Clinical Perspectives.pdf",
+    "papers/Primary Progressive Multiple Sclerosis.pdf",
+    "papers/Artificial intelligence and science of patient input a perspective from people with multiple sclerosis.pdf",
+    "papers/The role of AI for MRI-analysis in multiple sclerosis.pdf",
+    "papers/Harnessing Artificial Intelligence for the Diagnosis, Treatment and Research of Multiple Sclerosis.pdf",
+    "papers/Assessing AI-augmented training for multiple sclerosis classification.pdf",
+    "papers/Euro J of Neurology - 2018 - Dobson - Multiple sclerosis   a review.pdf",
+    "papers/Exploration of machine learning techniques in.pdf",
+    "papers/fimmu-12-700582.pdf",
+    "papers/journals.plos disability progression.pdf",
+    "papers/Machine_Learning_Approaches_in_Study_of_Multiple_S.pdf",
+    "papers/mdpi prognostic.pdf",
+    "papers/nature disease progression.pdf",
+    "papers/royal-society-machine-learning-for-refining-interpretation-of-magnetic-resonance-imaging-scans.pdf",
+    "papers/science systematic review.pdf",
+    "papers/Machine learning in diagnosis and disability prediction of multiple sclerosis.pdf",
 ]
 
 

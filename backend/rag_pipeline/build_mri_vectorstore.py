@@ -1,27 +1,22 @@
 # backend/rag_pipeline/build_mri_vectorstore.py
+
 import os
 from langchain_chroma import Chroma
-from langchain_core.documents import Document
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-MRI_DIR = "D:/mss/MS_Merged_Datasets/test"
-embedding = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+# Use project-root-safe path instead of D:/ (IMPORTANT for deployment)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PERSIST_DIR = os.path.join(BASE_DIR, "..", "..", "vectorstores", "mri_db_free")
+
 
 def build_mri_db():
-    docs = []
-    for cls in ["MS", "Healthy"]:
-        folder = os.path.join(MRI_DIR, cls)
-        for f in os.listdir(folder):
-            if f.endswith((".png", ".jpg", ".jpeg")):
-                docs.append(Document(
-                    page_content=f"MRI scan labeled {cls}",
-                    metadata={"path": os.path.join(folder, f), "label": cls}
-                ))
-
-    vectordb = Chroma.from_documents(
-        docs,
-        embedding,
-        persist_directory="vectorstores/mri_db_free"
+    # Create an empty Chroma DB
+    vectordb = Chroma(
+        persist_directory=PERSIST_DIR,
     )
+
     vectordb.persist()
-    print(f"✅ Saved MRI vector DB with {len(docs)} images.")
+    print("✅ MRI vectorstore initialized (empty, no images added).")
+
+if __name__ == "__main__":
+    build_mri_db()

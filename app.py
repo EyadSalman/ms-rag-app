@@ -121,6 +121,7 @@ if session and session.user:
     st.session_state.user = {
         "email": session.user.email,
         "id": session.user.id,
+        "name": session.user.user_metadata.get("full_name")
     }
 
 # ============================================================
@@ -247,7 +248,7 @@ def login_component():
         st.markdown(f'<div class="badge badge-success">Active: {session.user.email}</div>', unsafe_allow_html=True)
         load_chat_history()
 
-        if st.button("🚪 Logout", use_container_width=True):
+        if st.button("🚪 Logout", width="stretch"):
             supabase.auth.sign_out()
             st.session_state.user = None
             st.session_state.chat_sessions = {}
@@ -288,22 +289,24 @@ def login_component():
 def dashboard_component():
     st.markdown('<h1 class="gradient-header">MRI Analysis Dashboard</h1>', unsafe_allow_html=True)
 
-    # ✅ Check user login
+    # ============================
+    # 🔐 Login Check
+    # ============================
     user = st.session_state.get("user")
     if not user or not user.get("id"):
         st.warning("⚠️ Please login first to access the dashboard.")
         return
 
-    # =====================================================
-    # 📤 Upload and Analyze MRI
-    # =====================================================
-    with st.expander("📤 Upload and Analyze New MRI Scan", expanded=True):
+    # ================================================
+    # 📤 Single-Model MRI Analysis
+    # ================================================
+    with st.expander("📤 Upload and Analyze New MRI Scan (Single Model)", expanded=True):
         col1, col2 = st.columns([2, 1])
 
         with col1:
             model_choice = st.radio(
                 "🧠 Choose AI Model:",
-                ["mobilenet", "efficientnet", "cnn", "vit", "densenet", "resnet"],
+                ["mobilenet", "efficientnet", "densenet", "resnet"],
                 horizontal=True,
                 key="model_choice",
             )
@@ -319,44 +322,98 @@ def dashboard_component():
         if uploaded:
             col1, col2 = st.columns([1, 1])
             with col1:
-                st.image(uploaded, caption="📸 Uploaded MRI", use_container_width=True)
+                st.image(uploaded, caption="📸 Uploaded MRI", width="stretch")
 
             with col2:
-                if st.button("🔍 Analyze MRI", key="analyze_btn", use_container_width=True):
+                if st.button("🔍 Analyze MRI", key="analyze_btn", width="stretch"):
                     with st.spinner(f"Analyzing MRI using {model_choice.upper()}..."):
                         try:
-                            files = {"file": uploaded.getvalue()}
                             r = requests.post(
-                                f"{FASTAPI_URL}/predict/{model_choice}", files=files, timeout=60
+                                f"{FASTAPI_URL}/predict/{model_choice}",
+                                files={"file": uploaded.getvalue()},
+                                timeout=60
                             )
 
                             if r.status_code == 200:
                                 res = r.json()
                                 color = "🟢" if "Healthy" in res["diagnosis"] else "🔴"
 
-                                st.markdown("### Analysis Results")
+                                st.markdown("### 🧪 Analysis Results")
                                 st.metric(
                                     f"{color} {res['model'].upper()} Diagnosis",
                                     res["diagnosis"],
                                     f"Confidence: {res['confidence']}%",
                                 )
 
-                                # ✅ Save results to Supabase
+                                # Save to Supabase
                                 supabase.table("mri_results").insert({
                                     "user_id": user["id"],
                                     "diagnosis": res["diagnosis"],
                                     "confidence": res["confidence"],
                                     "created_at": datetime.now().isoformat()
                                 }).execute()
+
                                 st.success("✅ Results saved to your history!")
+
                             else:
                                 st.error(f"❌ Error {r.status_code}: {r.text}")
+
                         except Exception as e:
                             st.error(f"❌ Backend error: {e}")
 
-    # =====================================================
-    # 🩻 MRI HISTORY SECTION
-    # =====================================================
+    # ================================================
+    # 🔮 Multi-Model Comparison Report
+    # ================================================
+    st.markdown("---")
+    st.markdown('<h2 class="gradient-header">🧠 Multi-Model Comparison Report</h2>', unsafe_allow_html=True)
+
+    uploaded_cmp = st.file_uploader(
+        "📁 Upload MRI for Multi-Model Comparison",
+        type=["png", "jpg", "jpeg"],
+        key="mri_compare"
+    )
+
+    if uploaded_cmp:
+        st.image(uploaded_cmp, caption="📸 MRI for Comparison", width="stretch")
+
+        if st.button("🔍 Run Multi-Model Comparison", width="stretch"):
+            with st.spinner("Running all models (EfficientNet, MobileNet, DenseNet, ResNet)..."):
+                try:
+                    r = requests.post(
+                        f"{FASTAPI_URL}/compare_models/",
+                        files={"file": uploaded_cmp.getvalue()},
+                        data={"user_id": user["id"]},
+                        timeout=120
+                    )
+
+                    if r.status_code == 200:
+                        report = r.json()
+
+                        # Model-wise results
+                        st.subheader("📊 Model-wise Predictions")
+                        for model_name, result in report["results"].items():
+                            color = "🟢" if "Healthy" in result["diagnosis"] else "🔴"
+                            st.metric(
+                                f"{color} {model_name.upper()}",
+                                result["diagnosis"],
+                                f"{result['confidence']}%"
+                            )
+
+                        # Consensus summary
+                        st.markdown("---")
+                        st.subheader("🧠 Consensus Summary")
+                        st.info(f"**Consensus:** {report['consensus']}")
+                        st.success(f"🩺 Final Verdict: **{report['final_verdict']}**")
+
+                    else:
+                        st.error(f"❌ Error: {r.status_code} — {r.text}")
+
+                except Exception as e:
+                    st.error(f"❌ Backend error: {e}")
+
+    # ================================================
+    # 📜 MRI HISTORY SECTION
+    # ================================================
     st.markdown("---")
     st.markdown('<h2 class="gradient-header">🩻 Your MRI Scan History</h2>', unsafe_allow_html=True)
 
@@ -379,9 +436,9 @@ def dashboard_component():
 
         # Remove unwanted columns if present
         drop_cols = [c for c in ["id", "image_url", "user_id"] if c in df.columns]
-        df = df.drop(columns=drop_cols)
+        df = df.drop(columns=drop_cols, errors="ignore")
 
-        # 📈 Summary metrics
+        # Summary metrics
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("📊 Total Scans", len(df))
@@ -392,21 +449,24 @@ def dashboard_component():
             ms_count = len(df) - healthy_count
             st.metric("🔴 MS Detected", ms_count)
 
-
-        # Render each MRI result with delete button
+        # Render history entries
         for record in results:
             with st.container():
-                col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 1, 0.5])
+                cols = st.columns([2, 2, 2, 2, 1])
 
-                with col1:
-                    st.text(f"User ID: {record['user_id']}")    
-                with col2:
+                with cols[0]:
                     st.text(f"Diagnosis: {record['diagnosis']}")
-                with col3:
+
+                with cols[1]:
                     st.text(f"Confidence: {record['confidence']}%")
-                with col4:
+
+                with cols[2]:
                     st.text(f"Date: {record['created_at'][:19].replace('T', ' ')}")
-                with col4:
+
+                with cols[3]:
+                    st.text(f"Record ID: {record['id']}")
+
+                with cols[4]:
                     if st.button("🗑️", key=f"del_{record['id']}"):
                         try:
                             supabase.table("mri_results").delete().eq("id", record["id"]).execute()
@@ -416,10 +476,7 @@ def dashboard_component():
                         except Exception as e:
                             st.error(f"⚠️ Error deleting record: {e}")
 
-                st.markdown(
-                    "<hr style='margin-top:0.5rem;margin-bottom:0.5rem;border:1px solid #2d2d2d;'>",
-                    unsafe_allow_html=True
-                )
+                st.markdown("<hr>", unsafe_allow_html=True)
 
         # 📉 Chart visualization
         fig = px.bar(
@@ -432,15 +489,16 @@ def dashboard_component():
             color_discrete_map={
                 "Multiple Sclerosis Detected": "#f56565",
                 "Healthy Brain": "#48bb78",
-                "Healthy": "#48bb78"
-            }
+                "Healthy": "#48bb78",
+            },
         )
         fig.update_layout(
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             font=dict(family="Inter, sans-serif")
         )
-        st.plotly_chart(fig, use_container_width=True)
+
+        st.plotly_chart(fig, config={"responsive": True})
 
     except Exception as e:
         st.error(f"❌ Dashboard error: {e}")
@@ -504,7 +562,7 @@ def chatbot_component():
         else:
             st.info("📭 No previous chats yet.")
 
-        if st.button("➕ New Chat", key="new_chat_btn", use_container_width=True):
+        if st.button("➕ New Chat", key="new_chat_btn", width="stretch"):
             new_sid = str(uuid.uuid4())
             st.session_state.chat_sessions[new_sid] = []
             st.session_state.active_chat = new_sid
@@ -513,7 +571,7 @@ def chatbot_component():
 
     # Main Chat Area
     if st.session_state.active_chat is None:
-        if st.button("🚀 Start New Chat", key="start_chat_in_main", use_container_width=True):
+        if st.button("🚀 Start New Chat", key="start_chat_in_main", width="stretch"):
             new_sid = str(uuid.uuid4())
             st.session_state.chat_sessions[new_sid] = []
             st.session_state.active_chat = new_sid
@@ -542,7 +600,9 @@ def chatbot_component():
                         "query": prompt,
                         "history": st.session_state.messages,
                         "user_id": st.session_state.user["id"],
-                        "session_id": st.session_state.active_chat,  # 👈 This is the key!
+                        "session_id": st.session_state.active_chat, 
+                        "user_email": st.session_state.user["email"], 
+                        "user_name": st.session_state.user.get("name", "Google User"), 
                     },
                     timeout=60,
                 )

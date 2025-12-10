@@ -1,32 +1,23 @@
 # backend/main.py
 
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-from backend.model_inference import predict_mri
-from supabase_client import supabase
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
-import google.generativeai as genai
 import os
-from supabase import create_client
+import re
+import uuid
+import asyncio
+import logging
+import numpy as np
 from datetime import datetime
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field, validator
+from supabase import create_client
+from supabase_client import supabase
+import google.generativeai as genai
+from langchain_google_genai import ChatGoogleGenerativeAI
+from backend.model_inference import predict_mri
 from backend.rag_pipeline import get_gemini_response
 from backend.rag_pipeline.graph import build_ms_graph
-from fastapi import FastAPI, UploadFile, File, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator
-from typing import Optional, List, Dict, Any
-from datetime import datetime
-import logging
-import os
-from fastapi.responses import StreamingResponse
-from langchain_google_genai import ChatGoogleGenerativeAI
-import asyncio
-import re
-from fastapi import Form, HTTPException
-import uuid
-from fastapi import Query
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs entirely
@@ -35,7 +26,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-app = FastAPI()
+app = FastAPI(title="MRI Model Comparison API")
 
 # Allow Streamlit frontend access
 app.add_middleware(
@@ -52,67 +43,168 @@ class ChatRequest(BaseModel):
     query: str
     history: list
     user_id: str | None = None
+    user_email: str | None = None
+    user_name: str | None = None
     session_id: str | None = None
 
-app = FastAPI(title="MRI Model Comparison API")
+    class Config:
+        extra = "allow"   
 
 @app.post("/predict/{model_name}")
 async def predict(model_name: str, file: UploadFile = File(...)):
     contents = await file.read()
-    return predict_mri(contents, model_name)
+    result = predict_mri(contents, model_name)
+
+    if result.get("error"):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": result["message"]}
+        )
+
+    return result
+
+@app.post("/compare_models/")
+async def compare_models(file: UploadFile = File(...), user_id: str = Form(None)):
+    contents = await file.read()
+
+    # Compare across all 4 models you trained
+    model_names = ["mobilenet", "efficientnet", "densenet", "resnet"]
+    results = {}
+
+    for name in model_names:
+        try:
+            results[name] = predict_mri(contents, name)
+        except Exception as e:
+            results[name] = {
+                "model": name,
+                "diagnosis": "Error",
+                "confidence": 0,
+                "error": str(e)
+            }
+
+    # -------------------------------
+    # Consensus + Final Diagnosis
+    # -------------------------------
+    predictions = [r["diagnosis"] for r in results.values()]
+    ms_votes = predictions.count("Multiple Sclerosis Detected")
+
+    consensus_text = f"{ms_votes}/4 models predict MS"
+
+    if ms_votes >= 3:
+        final_verdict = "Likely Multiple Sclerosis"
+    elif ms_votes == 2:
+        final_verdict = "Uncertain — Mixed Predictions"
+    else:
+        final_verdict = "Likely Healthy Brain"
+
+    response = {
+        "results": results,
+        "consensus": consensus_text,
+        "final_verdict": final_verdict
+    }
+
+    # -------------------------------
+    # Save to Supabase (Optional)
+    # -------------------------------
+    if user_id:
+        supabase.table("mri_results").insert({
+            "user_id": user_id,
+            "diagnosis": final_verdict,
+            "confidence": results["efficientnet"]["confidence"],  # Use strongest model
+            "created_at": datetime.now().isoformat()
+        }).execute()
+
+    return response
 
 ms_graph = build_ms_graph()
 
 @app.post("/ask_gemini/")
 async def ask_gemini(req: ChatRequest):
-    print(f"Received Gemini query: {req.query}")
+    print(f"Received query: {req.query}")
+
+    # --- Run RAG pipeline ---
     result = ms_graph.invoke({"query": req.query})
-    print(f"RAG Pipeline result: {result}")
 
-    # Ensure user ID validity
-    if req.user_id and "usr_" in req.user_id:
-        req.user_id = None
-
-    # Extract plain text answer
+    # Extract answer cleanly
     answer_text = (
         result["answer"]["answer"]
         if isinstance(result["answer"], dict)
         else result["answer"]
     )
 
+    agent_type = result.get("agent_type", "research")
     sources = result.get("sources", [])
 
-    # ✅ IMPORTANT: Use session_id from request, don't create a new one
-    session_id = req.session_id if hasattr(req, "session_id") and req.session_id else str(uuid.uuid4())
+    # Use existing or create new session
+    session_id = req.session_id or str(uuid.uuid4())
 
-    if req.user_id:
-        try:
-            # Ensure user exists
-            existing_user = supabase.table("users").select("id").eq("id", req.user_id).execute().data
-            if not existing_user:
-                supabase.table("users").insert({
-                    "id": req.user_id,
-                    "email": getattr(req, "user_email", "unknown@email.com"),
-                    "name": "Google User",
-                    "role": "user"
-                }).execute()
+    # --- Validate that we have a user_id ---
+    if not req.user_id:
+        print("⚠️ No user_id in request → skipping database save.")
+        return {
+            "answer": answer_text,
+            "agent_type": agent_type,
+            "sources": sources,
+            "session_id": session_id,
+        }
 
-            # ✅ Save chat with the SAME session_id for the entire conversation
-            supabase.table("chat_history").insert({
-                "user_id": req.user_id,
-                "session_id": session_id,  # 👈 This must be consistent
-                "query": req.query,
-                "response": answer_text,
-                "agent_type": result.get("agent_type", "research"),
-                "sources": sources,
+    # --- Ensure user_id is a valid UUID ---
+    try:
+        user_uuid = uuid.UUID(str(req.user_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id (must be UUID).")
+
+    # Normalize user metadata
+    email = req.user_email.strip().lower() if req.user_email else None
+    name = req.user_name or "Google User"
+
+    # --- Ensure user exists in public.users ---
+    try:
+        user_exists = (
+            supabase.table("users")
+            .select("id")
+            .eq("id", str(user_uuid))
+            .execute()
+            .data
+        )
+
+        if not user_exists:
+            if not email:
+                raise HTTPException(400, "Email missing — cannot create user.")
+
+            supabase.table("users").insert({
+                "id": str(user_uuid),
+                "email": email,
+                "name": name,
+                "role": "user",
             }).execute()
 
-        except Exception as e:
-            print("⚠️ Chat history save failed:", e)
+            print(f"🟢 Created new user in public.users: {email}")
 
+    except Exception as e:
+        print("❌ Failed to ensure user exists:", e)
+        raise HTTPException(500, "User creation failed")
+
+    # --- Save chat history entry ---
+    try:
+        supabase.table("chat_history").insert({
+            "user_id": str(user_uuid),
+            "session_id": session_id,
+            "query": req.query,
+            "response": answer_text,
+            "agent_type": agent_type,
+            "sources": sources,
+        }).execute()
+
+        print(f"💾 Chat saved for user: {email or req.user_id}")
+
+    except Exception as e:
+        print("❌ Failed to save chat history:", e)
+
+    # Final return object
     return {
         "answer": answer_text,
-        "agent_type": result.get("agent_type"),
+        "agent_type": agent_type,
         "sources": sources,
         "session_id": session_id,
     }

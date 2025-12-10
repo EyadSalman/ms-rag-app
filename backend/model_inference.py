@@ -11,34 +11,55 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs entirely
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import matplotlib.pyplot as plt
-from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
 import timm
 from torchvision.models import densenet121, DenseNet121_Weights
 from torchvision.models import resnet18, ResNet18_Weights
+import numpy as np
+import cv2
 
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ===== Dataset 1: Mendeley 60 Patients =====
-MENDELEY_DIR = r"D:/ms/Brain MRI Dataset of MS"
-MS_NIFTI_DIR = os.path.join(MENDELEY_DIR, "MS")
-NORMAL_DIR   = os.path.join(MENDELEY_DIR, "Normal")
+# Get current folder (backend/)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "models")
 
-# ===== Dataset 2: Cropped Dataset =====
-CROPPED_DIR = r"D:/ms/Control and MS"
-CROPPED_MS_FOLDERS = ["MS_Axial_crop", "MS_Sagittal_crop"]
-CROPPED_CONTROL_FOLDERS = ["Control_Axial_crop", "Control_Sagittal_crop"]
+# ============================================================
+# MRI VALIDATION FUNCTION (must be ABOVE predict_mri)
+# ============================================================
+def is_mri_image(img: Image.Image) -> bool:
+    """
+    Lightweight validation to avoid non-MRI images.
+    Uses color variance, edge density, and circle detection.
+    """
 
-# ===== Output Folders =====
-CONVERTED_DIR = r"D:/mss/MS_Normal"
-CONVERTED_MS = os.path.join(CONVERTED_DIR, "MS")
-CONVERTED_HEALTHY = os.path.join(CONVERTED_DIR, "Healthy")
+    img_np = np.array(img)
+    img_gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
 
-MERGED_DIR = r"D:/mss/MS_Merged_Datasets"
-FINAL_SPLIT_DIR = r"D:/mss/MS_Final_Split_Datasets"
+    # 3. Detect circular brain-like region
+    circles = cv2.HoughCircles(
+        img_gray, cv2.HOUGH_GRADIENT,
+        dp=1.2, minDist=80,
+        param1=50, param2=30,
+        minRadius=40, maxRadius=120
+    )
+
+    if circles is None:
+        return False
+
+    # 1. Too colorful → not MRI
+    if np.std(img_np) > 60:
+        return False
+
+    # 2. Too many edges → likely a real-life photo
+    edges = cv2.Canny(img_gray, 50, 150)
+    if (edges > 0).sum() / edges.size > 0.10:
+        return False
+
+    return True
 
 
-# ----------------------------
 # Custom class definition (must match training)
 # ----------------------------
 class EfficientNetB0_Regularized(nn.Module):
@@ -64,78 +85,20 @@ class EfficientNetB0_Regularized(nn.Module):
     def forward(self, x):
         return self.model(x)
     
-class MobileNetV2_Dropout(nn.Module):
-    def __init__(self, dropout_p=0.4):
-        super().__init__()
-        self.model = mobilenet_v2(weights=None)   # no pretrained weights for CPU stability
-        num_ftrs = self.model.classifier[1].in_features
-        # replace the classifier head with dropout + linear
-        self.model.classifier = nn.Sequential(
-            nn.Dropout(p=dropout_p),
-            nn.Linear(num_ftrs, 2)
-        )
-
-    def forward(self, x):
-        return self.model(x)
-    
-class CNN_Regularized(nn.Module):
-    def __init__(self, dropout_p=0.5):
-        super(CNN_Regularized, self).__init__()
-
-        # Feature extractor
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(2),            # 112×112
-
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(2),            # 56×56
-
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.MaxPool2d(2),            # 28×28
-
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.MaxPool2d(2),            # 14×14
-        )
-
-        # Adaptive pooling → independent of input size
-        self.gap = nn.AdaptiveAvgPool2d((1, 1))
-
-        # Classification head
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Dropout(p=dropout_p),
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_p),
-            nn.Linear(128, 2)
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.gap(x)
-        x = self.classifier(x)
-        return x
-    
-class ViT_Tiny_Regularized(nn.Module):
+class MobileNetmobilV3_Regularized(nn.Module):
     def __init__(self, dropout_p=0.5):
         super().__init__()
-        base = timm.create_model("vit_tiny_patch16_224", pretrained=True)
-
-        # 🔹 Freeze the transformer encoder initially
-        for param in base.blocks.parameters():
+        base = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.IMAGENET1K_V1)
+        
+        # 🔹 Freeze feature extractor initially
+        for param in base.features.parameters():
             param.requires_grad = False
 
-        num_ftrs = base.head.in_features
-        base.head = nn.Sequential(
+        # Extract number of features from the last layer before classifier
+        num_ftrs = base.classifier[0].in_features  # 960 for MobileNetV3-Large
+
+        # 🔧 Replace classifier head with regularized one
+        base.classifier = nn.Sequential(
             nn.Dropout(p=dropout_p),
             nn.Linear(num_ftrs, 512),
             nn.BatchNorm1d(512),
@@ -143,7 +106,6 @@ class ViT_Tiny_Regularized(nn.Module):
             nn.Dropout(p=dropout_p),
             nn.Linear(512, 2)
         )
-
         self.model = base
 
     def forward(self, x):
@@ -206,38 +168,46 @@ class ResNet18_Regularized(nn.Module):
         return self.model(x)
 
     
-
+loaded_models = {}
 # ============================================================
 # 🧩 Model Loader
 # ============================================================
 def load_model(name: str):
-    if name == "mobilenet":
-        model = MobileNetV2_Dropout(dropout_p=0.4)
-        path = "D:/mss/models/mobilenetv2_ms_classifier.pth"
 
-    elif name == "efficientnet":
-        model = EfficientNetB0_Regularized(dropout_p=0.5)
-        path = "D:/mss/models/efficientnet_b0_mss_bests.pth"
-    elif name == "cnn":
-        model = CNN_Regularized(dropout_p=0.5)
-        path = "D:/mss/models/cnn_mss_best.pth"
-    elif name == "vit":
-        model = ViT_Tiny_Regularized(dropout_p=0.5)
-        path = "D:/mss/models/vit_mss_best.pth"
-    elif name == "densenet":
-        model = DenseNet121_Regularized(dropout_p=0.5)
-        path = "D:/mss/models/densenet121_mss_best.pth"
-    elif name == "resnet":
-        model = ResNet18_Regularized(dropout_p=0.5)
-        path = "D:/mss/models/resnet_18_mss_best.pth"
+    if name in loaded_models:
+        return loaded_models[name]
 
-    else:
-        raise ValueError("Unknown model name")
+    MODEL_REGISTRY = {
+        "mobilenet": (
+            "mobilenet_mss_bests.pth",
+            MobileNetmobilV3_Regularized(dropout_p=0.4)
+        ),
+        "efficientnet": (
+            "efficientnet_b0_mss_best_weights.pth",
+            EfficientNetB0_Regularized(dropout_p=0.5)
+        ),
+        "densenet": (
+            "densenet_121_new_mss_best.pth",
+            DenseNet121_Regularized(dropout_p=0.5)
+        ),
+        "resnet": (
+            "resnet_18_mss_best.pth",
+            ResNet18_Regularized(dropout_p=0.5)
+        ),
+    }
 
-    # Load trained weights
+    if name not in MODEL_REGISTRY:
+        raise ValueError(f"Unknown model name: {name}")
+
+    filename, model = MODEL_REGISTRY[name]
+    path = os.path.join(MODEL_DIR, filename)
+
     state = torch.load(path, map_location=device)
     model.load_state_dict(state, strict=False)
     model.to(device).eval()
+
+    loaded_models[name] = model  # cache it
+
     return model
 
 # ----------------------------
@@ -254,8 +224,16 @@ transform = transforms.Compose([
 # Prediction function
 # ----------------------------
 def predict_mri(file_bytes, model_name: str):
-    model = load_model(model_name)
     img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+
+    # 🔍 MRI VALIDATION STEP
+    if not is_mri_image(img):
+        return {
+            "error": True,
+            "message": "❌ The uploaded image does not appear to be an MRI scan. Please upload a valid brain MRI."
+        }
+
+    model = load_model(model_name)
     tensor = transform(img).unsqueeze(0).to(device)
 
     with torch.no_grad():
@@ -264,7 +242,9 @@ def predict_mri(file_bytes, model_name: str):
         conf, pred = torch.max(probs, 1)
 
     diagnosis = "Multiple Sclerosis Detected" if pred.item() == 1 else "Healthy Brain"
+
     return {
+        "error": False,
         "model": model_name,
         "diagnosis": diagnosis,
         "confidence": round(conf.item() * 100, 2)
