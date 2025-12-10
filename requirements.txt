@@ -36,9 +36,25 @@ sentence-transformers>=3.0.0
 torch
 torchvision
 tqdm
+numpy
+
+# ==============================
+# 🧩 Image Processing (MRI validation)
+# ==============================
+opencv-python-headless   # REQUIRED for cv2 (Render compatible)
 
 # ==============================
 # 📄 Document Loaders
 # ==============================
-PyPDF2
 unstructured
+PyPDF2
+
+# ==============================
+# ⚙️ Uvicorn Production Worker (Fixes "No open ports detected")
+# ==============================
+gunicorn
+
+# ==============================
+# 🛠 System Utilities
+# ==============================
+python-multipart
