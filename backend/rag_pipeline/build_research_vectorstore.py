@@ -12,7 +12,9 @@ from langchain_core.documents import Document
 # ==============================
 # 🔧 CONFIG
 # ==============================
-PERSIST_DIR = "vectorstores/research_db_free"
+# Use project-root-safe path instead of D:/ (IMPORTANT for deployment)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PERSIST_DIR = os.path.join(BASE_DIR, "..", "..", "vectorstores", "research_db_free")
 embedding = HuggingFaceEmbeddings(model_name="mixedbread-ai/mxbai-embed-large-v1")
 
 # ==============================

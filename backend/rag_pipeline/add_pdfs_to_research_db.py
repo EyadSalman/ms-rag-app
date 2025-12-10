@@ -11,7 +11,8 @@ from langchain_chroma import Chroma
 # ==========================
 # 🔧 CONFIGURATION
 # ==========================
-PERSIST_DIR = "vectorstores/research_db_free"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PERSIST_DIR = os.path.join(BASE_DIR, "..", "..", "vectorstores", "research_db_free")
 embedding = HuggingFaceEmbeddings(model_name="mixedbread-ai/mxbai-embed-large-v1")
 
 
