@@ -10,7 +10,6 @@ import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs entirely
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-import matplotlib.pyplot as plt
 from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
 import timm
 from torchvision.models import densenet121, DenseNet121_Weights
@@ -206,7 +205,7 @@ def load_model(name: str):
     model.load_state_dict(state, strict=False)
     model.to(device).eval()
 
-    loaded_models[name] = model  # cache it
+    loaded_models[name] = model 
 
     return model
 
