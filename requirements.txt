@@ -1,6 +1,6 @@
-# ==============================================================
-# 🧠 Core App Frameworks
-# ==============================================================
+# ==============================
+# 🧠 Core Application Frameworks
+# ==============================
 streamlit
 fastapi
 uvicorn
@@ -9,28 +9,36 @@ pillow
 plotly
 python-dotenv
 supabase
+
+# Google Gemini API
 google-generativeai
 
-# ==============================================================
-# 🔍 RAG / Retrieval & LLM Integration
-# ==============================================================
-
-# 🧩 LangChain Modular Packages (Modern Ecosystem)
+# ==============================
+# 🔍 RAG / Retrieval System
+# ==============================
 langchain-core>=1.0.0
 langchain-community>=0.4.0
 langchain-chroma>=1.0.0
 langchain-huggingface>=1.0.0
 langchain-google-genai>=3.0.0
 langchain-text-splitters>=1.0.0
-langchain-experimental>=0.1.0  # for EnsembleRetriever and advanced retrievers
 
-# 🧠 Vector Databases & Embeddings
+# ==============================
+# ⚡ Vector DB & Embeddings
+# ==============================
 chromadb>=0.5.3
+huggingface-hub>=0.21.0
 sentence-transformers>=3.0.0
-transformers>=4.42.0
-torch>=2.2.0
+
+# ==============================
+# 🤖 Machine Learning / Deep Learning
+# ==============================
+torch
+torchvision
 tqdm
 
-# 🧾 Document Loaders & Processing
-unstructured
+# ==============================
+# 📄 Document Loaders
+# ==============================
 PyPDF2
+unstructured

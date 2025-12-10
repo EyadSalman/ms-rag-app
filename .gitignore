@@ -3,27 +3,37 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.db
-*.sqlite3
 
-# Environments
-.env
-.venv/
+# Virtual envs
 venv/
-env/
+.env
+.env.local
+*.env
 
-# Large model/vector files
-vectorstores/
-models/
-*.pth
-*.pt
-*.h5
-
-# Streamlit cache
+# Streamlit
 .streamlit/
 
-# OS / IDE files
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+# Supabase
+.supabase/
+supabase/keys.json
+
+# Model Weights
+backend/models/*.pth
+backend/models/*.pt
+
+# Vector Stores
+vectorstores/
+chromadb/
+
+# MRI images / uploads
+uploads/
+data/
+static/uploads/
+
+# Cache
+*.DS_Store
+.cache/
+
+# Logs
+*.log
+logs/
