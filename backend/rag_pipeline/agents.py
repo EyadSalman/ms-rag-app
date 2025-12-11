@@ -3,97 +3,166 @@
 import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import google.generativeai as genai
 
+# ===========================
+# 🔐 GOOGLE API CONFIG
+# ===========================
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-if not GOOGLE_API_KEY:
-    raise ValueError("ERROR: GOOGLE_API_KEY is missing from environment variables!")
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+else:
+    print("⚠️ WARNING: GOOGLE_API_KEY missing — LLM disabled.")
 
-genai.configure(api_key=GOOGLE_API_KEY)
-
-from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma
+# ===========================
+# 🔧 LAZY IMPORTS
+# ===========================
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
-
-#  Initialize LLM and embeddings
-embedding = HuggingFaceEmbeddings(model_name="mixedbread-ai/mxbai-embed-large-v1")
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+from langchain_community.vectorstores import Chroma
 
 
-# Load vectorstores
-MRI_DB = Chroma(persist_directory="vectorstores/mri_db_free", embedding_function=embedding)
-RESEARCH_DB = Chroma(persist_directory="vectorstores/research_db_free", embedding_function=embedding)
+# ===========================
+# 🔁 Lazy Instances
+# ===========================
+_embedding = None
+_llm = None
+_MRI_DB = None
+_RESEARCH_DB = None
 
+
+# ===========================
+# 🔌 Embedding Loader
+# ===========================
+def get_embedding():
+    global _embedding
+    if _embedding is None:
+        print("🔄 Loading embedding model...")
+        _embedding = HuggingFaceEmbeddings(
+            model_name="mixedbread-ai/mxbai-embed-large-v1"
+        )
+    return _embedding
+
+
+# ===========================
+# 🤖 LLM Loader
+# ===========================
+def get_llm():
+    global _llm
+    if _llm is None:
+        print("🔄 Loading Gemini Flash...")
+        _llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash", temperature=0.1
+        )
+    return _llm
+
+
+# ===========================
+# 📁 MRI Vectorstore Loader
+# ===========================
+def get_mri_db():
+    global _MRI_DB
+    if _MRI_DB is None:
+        path = os.path.join("backend", "vectorstores", "mri_db_free")
+        if not os.path.exists(path):
+            print("⚠️ MRI vectorstore missing:", path)
+            return None
+
+        print("📁 Loading MRI vectorstore...")
+        _MRI_DB = Chroma(
+            persist_directory=path,
+            embedding_function=get_embedding()
+        )
+    return _MRI_DB
+
+
+# ===========================
+# 📚 Research Vectorstore Loader
+# ===========================
+def get_research_db():
+    global _RESEARCH_DB
+    if _RESEARCH_DB is None:
+        path = os.path.join("backend", "vectorstores", "research_db_free")
+        if not os.path.exists(path):
+            print("⚠️ Research vectorstore missing:", path)
+            return None
+
+        print("📁 Loading Research vectorstore...")
+        _RESEARCH_DB = Chroma(
+            persist_directory=path,
+            embedding_function=get_embedding()
+        )
+    return _RESEARCH_DB
+
+
+# ===========================
+# 🧠 MRI RAG Agent
+# ===========================
 def mri_agent(query: str):
-    """Retrieve MRI examples similar to a query."""
-    results = MRI_DB.similarity_search(query, k=3)
-    context = "\n".join([r.page_content for r in results]) or "No MRI examples found."
-    prompt = f"You are an MRI interpretation assistant.\n\n{context}\n\nQuestion: {query}\nAnswer:"
-    resp = llm.invoke(prompt)
-    print("Gemini MRI response raw:", resp)
-    return {
-  "answer": resp.content,
-  "agent_type": "research",
-  "rag_used": len(results) > 0,
-  "sources": [r.metadata.get("source") for r in results]
-}
+    db = get_mri_db()
+    llm = get_llm()
 
+    if db is None:
+        return {"answer": "MRI knowledge base unavailable.", "agent_type": "mri"}
 
-def research_agent(query: str):
-    """Retrieve relevant medical papers and generate a natural, well-cited answer (no PDF links shown)."""
-    results = RESEARCH_DB.similarity_search(query, k=3)
-    context = "\n".join([r.page_content for r in results]) or "No relevant papers found."
+    results = db.similarity_search(query, k=3)
+    context = "\n".join(r.page_content for r in results) or "No MRI data available."
 
-    # ✅ Collect only non-PDF source identifiers for prompting
-    sources = []
-    seen = set()
-    for r in results:
-        src = r.metadata.get("url") or r.metadata.get("source") or r.metadata.get("title")
-        if src and not str(src).lower().endswith(".pdf") and src not in seen:  # 🔹 ignore PDF links
-            sources.append(src)
-            seen.add(src)
-    source_text = ", ".join(sources[:3]) if sources else "no specific papers"
-
-    # 🧠 Build better prompt
     prompt = f"""
-You are a medical research assistant specialized in Multiple Sclerosis (MS).
+You are an MRI interpretation assistant.
 
-Use the following research context and sources to answer the user's question naturally.
-If the context is insufficient, say so and avoid fabricating details.
-
-Write the answer like a human expert, naturally referencing studies (e.g.,
-"According to a 2023 Nature study...") or or expriment results conducted related to Multiple Sclerosis.
-
-Do not include or link to PDF files directly — simply refer to them conceptually if needed.
-
-At the end, list paper names or journal names only, 
-without clickable links.
-
-### Research Context:
+MRI Context:
 {context}
 
-### Available Sources:
-{source_text}
-
-### Question:
+Question:
 {query}
 
-### Answer:
+Answer:
 """
 
     resp = llm.invoke(prompt)
-    print("AI Assistant response:", resp)
+    return {
+        "answer": resp.content,
+        "agent_type": "mri",
+        "sources": [r.metadata.get("source") for r in results],
+    }
 
-    if not resp.content.strip():
-        retry = llm.invoke(f"Answer briefly, citing sources naturally if possible: {query}")
-        return retry.content or "No response generated."
 
-    # ✅ Append simplified sources (names only, no links)
-    if sources:
-        source_list = "\n".join([f"- {src}" for src in sources])
-        final_answer = f"{resp.content.strip()}\n\n**Sources:**\n{source_list}"
-    else:
-        final_answer = resp.content.strip()
+# ===========================
+# 📚 Research RAG Agent
+# ===========================
+def research_agent(query: str):
+    db = get_research_db()
+    llm = get_llm()
 
-    return final_answer
+    if db is None:
+        return "MS research database unavailable."
+
+    results = db.similarity_search(query, k=3)
+    context = "\n".join(r.page_content for r in results) or "No research found."
+
+    sources = []
+    seen = set()
+    for r in results:
+        src = r.metadata.get("source")
+        if src and src not in seen:
+            sources.append(src)
+            seen.add(src)
+
+    prompt = f"""
+You are an MS research assistant. Provide medically accurate answers using evidence.
+
+Research Context:
+{context}
+
+Sources: {', '.join(sources)}
+
+Question:
+{query}
+
+Answer:
+"""
+
+    resp = llm.invoke(prompt)
+    return resp.content.strip()
