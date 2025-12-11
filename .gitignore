@@ -21,9 +21,6 @@ supabase/keys.json
 backend/models/*.pth
 backend/models/*.pt
 
-# Vector Stores
-vectorstores/
-chromadb/
 
 # MRI images / uploads
 uploads/
