@@ -1,123 +1,137 @@
 # backend/rag_pipeline/add_pdfs_to_research_db.py
-import os, hashlib
+
+import os
+import hashlib
+
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import Chroma
 
-# ==========================
-# 🔧 CONFIGURATION
-# ==========================
+
+# ============================================================
+# 📁 PATHS
+# ============================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PERSIST_DIR = os.path.join(BASE_DIR, "..", "..", "vectorstores", "research_db_free")
+
+PAPERS_DIR = os.path.join("backend", "papers")  
+PERSIST_DIR = os.path.join("backend", "vectorstores", "research_db_free")
+
+os.makedirs(PERSIST_DIR, exist_ok=True)
+
 embedding = HuggingFaceEmbeddings(model_name="mixedbread-ai/mxbai-embed-large-v1")
 
 
-# 🆕 Newly added PDFs (only these will be processed)
-NEW_PDF_FILES = [
-    "papers/sensors-22-07856.pdf",
-    "papers/integrating-large-language-models-in-care-research-and-education-in-multiple-sclerosis-management.pdf",
-    "papers/New tool for diagnosis.pdf",
-    "papers/An Automatic Segmentation of T2-FLAIR Multiple.pdf",
-    "papers/Artificial intelligence to predict clinical disability in patients.pdf",
-    "papers/Role of MRI in MS.pdf",
-    "papers/MRI in the Diagnosis and Monitoring of Multiple Sclerosis.pdf",
-    "papers/the-neuropsychiatry-of-multiple-sclerosis.pdf",
-    "papers/ptj3703175.pdf",
-    "papers/Detecting New Lesions Using a Large Language Model  Applications in Real‐World.pdf",
-    "papers/AI in MRI scans.pdf",
-    "papers/De-escalating and discontinuing disease-modifying therapies in multiple sclerosis.pdf",
-    "papers/Early identification of individuals at risk for Multiple Sclerosis.pdf",
-    "papers/Towards a Uniﬁed Set of Diagnostic Criteria for Multiple Sclerosis.pdf",
-    "papers/Environmental risk factors for multiple sclerosis.pdf",
-    "papers/Metabolomics in Multiple Sclerosis Advances, Challenges, and Clinical Perspectives.pdf",
-    "papers/Primary Progressive Multiple Sclerosis.pdf",
-    "papers/Artificial intelligence and science of patient input a perspective from people with multiple sclerosis.pdf",
-    "papers/The role of AI for MRI-analysis in multiple sclerosis.pdf",
-    "papers/Harnessing Artificial Intelligence for the Diagnosis, Treatment and Research of Multiple Sclerosis.pdf",
-    "papers/Assessing AI-augmented training for multiple sclerosis classification.pdf",
-    "papers/Euro J of Neurology - 2018 - Dobson - Multiple sclerosis   a review.pdf",
-    "papers/Exploration of machine learning techniques in.pdf",
-    "papers/fimmu-12-700582.pdf",
-    "papers/journals.plos disability progression.pdf",
-    "papers/Machine_Learning_Approaches_in_Study_of_Multiple_S.pdf",
-    "papers/mdpi prognostic.pdf",
-    "papers/nature disease progression.pdf",
-    "papers/royal-society-machine-learning-for-refining-interpretation-of-magnetic-resonance-imaging-scans.pdf",
-    "papers/science systematic review.pdf",
-    "papers/Machine learning in diagnosis and disability prediction of multiple sclerosis.pdf",
-]
-
-
-# ==========================
-# ⚙️ HELPER FUNCTIONS
-# ==========================
+# ============================================================
+# 🔐 HASHING FUNCTION
+# ============================================================
 def compute_hash(text: str) -> str:
-    """Create a unique hash for each chunk's text."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def add_pdfs_to_vectorstore():
-    # Load existing Chroma DB
-    vectordb = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding)
-
-    # Gather existing hashes (if present)
-    existing_hashes = set()
+# ============================================================
+# 📦 LOAD EXISTING HASHES
+# ============================================================
+def get_existing_hashes(vectordb):
+    hashes = set()
     try:
-        all_docs = vectordb.get(include=["metadatas"])
-        for m in all_docs["metadatas"]:
+        all_data = vectordb.get(include=["metadatas"])
+        for m in all_data["metadatas"]:
             if m and "hash" in m:
-                existing_hashes.add(m["hash"])
+                hashes.add(m["hash"])
     except Exception:
         pass
+    return hashes
 
-    docs = []
-    for path in NEW_PDF_FILES:
-        if not os.path.exists(path):
-            print(f"⚠️ Missing file: {path}")
-            continue
 
-        loader = PyPDFLoader(path)
-        loaded_docs = loader.load()
-        for d in loaded_docs:
-            d.metadata["source"] = os.path.basename(path)
-        docs.extend(loaded_docs)
-        print(f"✅ Loaded {len(loaded_docs)} pages from {os.path.basename(path)}")
+# ============================================================
+# 🧠 MAIN FUNCTION — Adds all PDFs from papers/
+# ============================================================
+def add_pdfs_to_vectorstore():
+    print("🚀 Updating research vectorstore with new PDFs...")
 
+    vectordb = Chroma(
+        persist_directory=PERSIST_DIR,
+        embedding_function=embedding
+    )
+
+    existing_hashes = get_existing_hashes(vectordb)
+    print(f"🔍 Existing chunks in vectorstore: {len(existing_hashes)}")
+
+    # --------------------------------------------------------
+    # 🧾 Get all PDFs in backend/papers
+    # --------------------------------------------------------
+    pdf_files = [
+        os.path.join(PAPERS_DIR, f)
+        for f in os.listdir(PAPERS_DIR)
+        if f.lower().endswith(".pdf")
+    ]
+
+    if not pdf_files:
+        print("⚠️ No PDF files found in:", PAPERS_DIR)
+        return
+
+    print(f"📄 Found {len(pdf_files)} PDFs")
+
+    # --------------------------------------------------------
+    # 📚 Load PDFs
+    # --------------------------------------------------------
+    loaded_docs = []
+    for pdf_path in pdf_files:
+        try:
+            loader = PyPDFLoader(pdf_path)
+            docs = loader.load()
+
+            for d in docs:
+                d.metadata["source"] = os.path.basename(pdf_path)
+
+            loaded_docs.extend(docs)
+            print(f"✅ Loaded {len(docs)} pages from:", os.path.basename(pdf_path))
+
+        except Exception as e:
+            print(f"❌ Failed to load {pdf_path}: {e}")
+
+    # --------------------------------------------------------
+    # ✂️ Split into chunks
+    # --------------------------------------------------------
     splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1200,  # longer for better coherence
-    chunk_overlap=150,
-    separators=["\n\n", "\n", ".", "?", "!", " ", ""]
-)
-    chunks = splitter.split_documents(docs)
-    print(f"🧩 Split {len(chunks)} chunks from NEW PDFs")
+        chunk_size=1200,
+        chunk_overlap=150,
+        separators=["\n\n", "\n", ".", "?", "!", " ", ""]
+    )
 
-    # Deduplicate before adding
+    chunks = splitter.split_documents(loaded_docs)
+    print(f"🧩 Generated {len(chunks)} chunks")
+
+    # --------------------------------------------------------
+    # 🚫 Remove duplicates using text hash
+    # --------------------------------------------------------
     new_chunks = []
-    for c in chunks:
-        h = compute_hash(c.page_content)
+    for chunk in chunks:
+        h = compute_hash(chunk.page_content)
         if h not in existing_hashes:
-            c.metadata["hash"] = h
-            new_chunks.append(c)
-        else:
-            continue
+            chunk.metadata["hash"] = h
+            new_chunks.append(chunk)
 
-    print(f"🔎 {len(new_chunks)} new unique chunks detected (out of {len(chunks)}).")
+    print(f"✨ {len(new_chunks)} new unique chunks detected")
 
+    # --------------------------------------------------------
+    # 💾 Store in vectorstore
+    # --------------------------------------------------------
     if new_chunks:
         vectordb.add_documents(new_chunks)
-        print(f"💾 Added {len(new_chunks)} chunks to '{PERSIST_DIR}'")
+        print(f"💾 Added {len(new_chunks)} new chunks into DB")
     else:
-        print("✅ No new chunks to add — vectorstore already up to date.")
+        print("✅ No new chunks — already up to date.")
 
-    print("✅ New PDFs merged into research vectorstore successfully!")
+    print("🎉 Research PDF vectorstore updated successfully!")
 
 
-# ==========================
-# 🚀 MAIN
-# ==========================
+# ============================================================
+# 🔥 RUN DIRECTLY
+# ============================================================
 if __name__ == "__main__":
     add_pdfs_to_vectorstore()
