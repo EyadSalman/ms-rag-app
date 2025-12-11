@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from supabase import create_client
-from supabase_client import supabase
 import google.generativeai as genai
 from backend.model_inference import predict_mri
 from backend.rag_pipeline.graph import build_ms_graph
