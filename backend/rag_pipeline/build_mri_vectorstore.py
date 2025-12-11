@@ -2,21 +2,13 @@
 
 import os
 from langchain_chroma import Chroma
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-# Use project-root-safe path instead of D:/ (IMPORTANT for deployment)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PERSIST_DIR = os.path.join(BASE_DIR, "..", "..", "vectorstores", "mri_db_free")
-
+BASE_DIR = os.path.join("backend", "vectorstores", "mri_db_free")
 
 def build_mri_db():
-    # Create an empty Chroma DB
-    vectordb = Chroma(
-        persist_directory=PERSIST_DIR,
-    )
-
-    vectordb.persist()
-    print("✅ MRI vectorstore initialized (empty, no images added).")
+    os.makedirs(BASE_DIR, exist_ok=True)
+    Chroma(persist_directory=BASE_DIR)
+    print("✅ MRI vectorstore initialized at:", BASE_DIR)
 
 if __name__ == "__main__":
     build_mri_db()
