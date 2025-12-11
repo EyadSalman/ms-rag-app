@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual envs
+venv/
+.env
+.env.local
+*.env
+
+# Streamlit
+.streamlit/
+
+# Supabase
+.supabase/
+supabase/keys.json
+
+# Model Weights
+backend/models/*.pth
+backend/models/*.pt
+
+# Vector Stores
+vectorstores/
+chromadb/
+
+# MRI images / uploads
+uploads/
+data/
+static/uploads/
+
+# Cache
+*.DS_Store
+.cache/
+
+# Logs
+*.log
+logs/
