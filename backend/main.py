@@ -3,8 +3,6 @@
 import os
 import re
 import uuid
-import asyncio
-import logging
 import numpy as np
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query
@@ -91,11 +89,11 @@ async def compare_models(file: UploadFile = File(...), user_id: str = Form(None)
     consensus_text = f"{ms_votes}/4 models predict MS"
 
     if ms_votes >= 3:
-        final_verdict = "Likely Multiple Sclerosis"
+        final_verdict = "Multiple Sclerosis Detected"
     elif ms_votes == 2:
         final_verdict = "Uncertain — Mixed Predictions"
     else:
-        final_verdict = "Likely Healthy Brain"
+        final_verdict = "Healthy Brain"
 
     response = {
         "results": results,
