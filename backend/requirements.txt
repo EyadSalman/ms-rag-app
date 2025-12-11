@@ -1,0 +1,60 @@
+# ==============================
+# 🧠 Core Application Frameworks
+# ==============================
+streamlit
+fastapi
+uvicorn
+requests
+pillow
+plotly
+python-dotenv
+supabase
+
+# Google Gemini API
+google-generativeai
+
+# ==============================
+# 🔍 RAG / Retrieval System
+# ==============================
+langchain-core>=1.0.0
+langchain-community>=0.4.0
+langchain-chroma>=1.0.0
+langchain-huggingface>=1.0.0
+langchain-google-genai>=3.0.0
+langchain-text-splitters>=1.0.0
+
+# ==============================
+# ⚡ Vector DB & Embeddings
+# ==============================
+chromadb>=0.5.3
+huggingface-hub>=0.21.0
+sentence-transformers>=3.0.0
+
+# ==============================
+# 🤖 Machine Learning / Deep Learning
+# ==============================
+torch
+torchvision
+tqdm
+numpy
+
+# ==============================
+# 🧩 Image Processing (MRI validation)
+# ==============================
+opencv-python-headless   # REQUIRED for cv2 (Render compatible)
+
+# ==============================
+# 📄 Document Loaders
+# ==============================
+unstructured
+PyPDF2
+
+# ==============================
+# ⚙️ Uvicorn Production Worker (Fixes "No open ports detected")
+# ==============================
+gunicorn
+
+# ==============================
+# 🛠 System Utilities
+# ==============================
+python-multipart
